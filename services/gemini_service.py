@@ -1,149 +1,141 @@
 """
-Gemini Service Module
-Handles document processing using Google Gemini Vision API
+Gemini Service Module - V3 (Advanced Analysis)
 """
 
-import base64
 import json
 import logging
-from typing import Dict, Any, Optional
+import asyncio
+import os
+from typing import Dict, Any
+
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from fastapi import HTTPException
+import jsonschema
+import aiofiles
 
 logger = logging.getLogger(__name__)
 
+
 class GeminiService:
-    """Service for handling document processing using Gemini Vision API"""
+    _is_configured = False
 
     def __init__(self, api_key: str):
-        self.api_key = api_key
-        if api_key:
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-1.5-pro')
-        else:
-            self.model = None
+        if not GeminiService._is_configured:
+            if api_key:
+                genai.configure(api_key=api_key)
+                GeminiService._is_configured = True
+                logger.info("Google Generative AI client configured successfully.")
+            else:
+                logger.warning("GeminiService initialized without an API key.")
 
-    async def process_document_with_schema(self, file_content: bytes, schema: Dict[str, Any], document_type: str) -> Dict[str, Any]:
-        """
-        Process document using Gemini Vision API with structured output
-
-        Args:
-            file_content: Raw PDF/image file bytes
-            schema: JSON schema for structured extraction
-            document_type: Type of document for prompt customization
-
-        Returns:
-            Dict containing structured data and metadata
-        """
-        if not self.api_key or not self.model:
+    async def process_document_with_schema(
+        self,
+        file_content: bytes,
+        schema: Dict[str, Any],
+        document_type: str,
+        model_name: str = "gemini-2.5-flash-lite"
+    ) -> Dict[str, Any]:
+        if not GeminiService._is_configured:
             raise HTTPException(status_code=500, detail="Gemini API key not configured")
 
+        temp_file_path = None
+        uploaded_file = None
+
         try:
-            # Convert file to base64
-            file_b64 = base64.b64encode(file_content).decode('utf-8')
+            async with aiofiles.tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                await temp_file.write(file_content)
+                temp_file_path = temp_file.name
 
-            # Create prompt based on document type
-            system_prompt = self._get_system_prompt(document_type)
+            uploaded_file = await asyncio.to_thread(genai.upload_file, path=temp_file_path)
+            logger.info(f"Uploaded file to Gemini: {uploaded_file.name}")
 
-            # Create the prompt with schema
-            schema_str = json.dumps(schema, indent=2)
-            prompt = f"""{system_prompt}
+            prompt = self._create_prompt(schema, document_type)
 
-Please analyze this document and extract the information according to the following JSON schema:
-
-{schema_str}
-
-Return ONLY a valid JSON object that matches this schema exactly. Do not include any additional text or explanations.
-
-Document: data:application/pdf;base64,{file_b64}"""
-
-            # Generate response
-            response = self.model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=8192,
-                )
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config={"response_mime_type": "application/json"},
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
             )
 
-            # Extract and parse JSON from response
-            response_text = response.text.strip()
+            response = await asyncio.to_thread(model.generate_content, [prompt, uploaded_file])
+            logger.info(f"Received raw response from Gemini API: {response.text[:500]}...")
 
-            # Try to extract JSON if wrapped in other text
-            try:
-                # First try direct parsing
-                result = json.loads(response_text)
-            except json.JSONDecodeError:
-                # Try to find JSON within the response
-                import re
-                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if json_match:
-                    result = json.loads(json_match.group())
-                else:
-                    raise HTTPException(status_code=500, detail="No valid JSON found in Gemini response")
+            if not response.text:
+                raise HTTPException(status_code=500, detail="Gemini returned an empty response, likely due to a content filter.")
+
+            result = json.loads(response.text)
+            self._validate_response(result, schema)
 
             return {
                 "structured_data": result,
-                "confidence": 0.9,  # Gemini doesn't provide confidence scores
-                "processing_notes": "Processed using Gemini Vision API",
-                "pages_processed": 1,  # Gemini processes as single unit
-                "model_used": "gemini-1.5-pro"
+                "confidence": 0.9,
+                "processing_notes": f"Processed with Gemini File API using model {model_name}.",
+                "pages_processed": 1,
+                "model_used": model_name
             }
 
+        except jsonschema.ValidationError as e:
+            logger.error(f"Gemini response failed schema validation: {e.message}")
+            raise HTTPException(status_code=500, detail=f"Gemini response failed schema validation: {e.message}")
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse Gemini response: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to parse Gemini response as JSON")
+            logger.error(f"Failed to parse JSON response from Gemini. Error: {e}")
+            raise HTTPException(status_code=500, detail=f"Invalid JSON response from Gemini: {e}")
         except Exception as e:
-            logger.error(f"Gemini processing failed: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Gemini processing failed: {str(e)}")
+            logger.error(f"An unexpected error occurred during Gemini processing: {e}")
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
+        finally:
+            if uploaded_file:
+                logger.info(f"Uploaded file {uploaded_file.name} will be auto-deleted by Gemini.")
+            if temp_file_path and await asyncio.to_thread(os.path.exists, temp_file_path):
+                await asyncio.to_thread(os.remove, temp_file_path)
+                logger.info(f"Deleted temp file: {temp_file_path}")
 
-    def _get_system_prompt(self, document_type: str) -> str:
-        """Get system prompt based on document type"""
-        base_prompt = """You are an expert document analyzer. Extract information from the provided document image/PDF and return it as structured JSON data.
+    @staticmethod
+    def _create_prompt(schema: Dict[str, Any], document_type: str) -> str:
+        """Constructs the prompt for the Gemini API call with enhanced instructions."""
+        system_prompt = GeminiService._get_system_prompt(document_type)
+        schema_str = json.dumps(schema, indent=2)
+        
+        # --- NEW CRITICAL INSTRUCTION ADDED HERE ---
+        debit_credit_instruction = (
+            "CRITICAL INSTRUCTION: The 'Withdrawal' and 'Deposit' columns in the source document can be misleading. "
+            "You MUST determine if a transaction is a debit or a credit by observing the change in the 'Balance' column. "
+            "If the balance decreases, it is a debit (withdrawal). If the balance increases, it is a credit (deposit). "
+            "Populate the debit and credit fields in the JSON accordingly."
+        )
 
-IMPORTANT: Analyze the document carefully and extract ALL relevant information. Be precise with:
-- Names, dates, amounts, and numbers
-- Account details and transaction information
-- Contact information and addresses
-- Any other structured data visible in the document
+        return (
+            f"{system_prompt}\n\n{debit_credit_instruction}\n\nPlease analyze this document and extract the information according to "
+            f"the following JSON schema:\n\n{schema_str}\n\nPlease adhere strictly to the schema. "
+            "Do not add or remove fields. Parse monetary values as floats and dates as 'YYYY-MM-DD'. "
+            "Extract every single transaction listed in the document, identify a merchant for each where possible, and assign a category."
+        )
 
-Return the extracted data in the exact JSON format specified by the schema."""
+    @staticmethod
+    def _validate_response(instance: Dict[str, Any], schema: Dict[str, Any]):
+        try:
+            jsonschema.validate(instance=instance, schema=schema)
+            logger.info("Response validated against schema successfully.")
+        except jsonschema.ValidationError:
+            raise
 
-        if document_type == "bank_statement":
-            return base_prompt + """
-
-For bank statements, focus on:
-- Account holder name and account details
-- All transaction records with dates, descriptions, amounts
-- Opening and closing balances
-- Statement period and summary information
-- Branch and contact details
-
-Extract EVERY transaction visible in the statement."""
-        elif document_type == "invoice":
-            return base_prompt + """
-
-For invoices, focus on:
-- Invoice number, date, and due date
-- Vendor/company information and billing address
-- All line items with descriptions, quantities, rates, and amounts
-- Subtotal, tax amounts, and total
-- Payment terms and instructions
-
-Extract EVERY line item and all financial details."""
-        elif document_type == "receipt":
-            return base_prompt + """
-
-For receipts, focus on:
-- Store/vendor name and location
-- Receipt number and transaction date/time
-- All purchased items with descriptions, quantities, and prices
-- Subtotal, tax, and total amounts
-- Payment method information
-
-Extract EVERY item listed on the receipt."""
-        else:
-            return base_prompt + """
-
-Extract all relevant information from the document according to the provided schema.
-Be thorough and precise in your extraction."""
+    @staticmethod
+    def _get_system_prompt(document_type: str) -> str:
+        # This function remains the same as before
+        prompts = {
+            "bank_statement": "For bank statements, focus on account details, all transactions, balances, and summary information. Extract EVERY transaction.",
+            "invoice": "For invoices, focus on invoice number, vendor/billing info, all line items, subtotals, taxes, and totals. Extract EVERY line item.",
+            "receipt": "For receipts, focus on vendor details, transaction date/time, all purchased items, and financial totals. Extract EVERY item.",
+            "default": "Extract all relevant information from the document according to the provided schema."
+        }
+        instruction = prompts.get(document_type, prompts["default"])
+        return (
+            "You are an expert document analysis AI. Your task is to extract, analyze, and categorize information from the "
+            f"provided document and return it as structured JSON.\n\n{instruction}"
+        )

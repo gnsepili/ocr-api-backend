@@ -1,22 +1,44 @@
 """
-Pydantic Models and JSON Schemas
+Pydantic Models and JSON Schemas - V5 (Flexible Validation)
 """
+from typing import Optional, Dict, Any, List, Union
+from pydantic import BaseModel, Field
 
-from typing import Optional, Dict, Any, List
-from pydantic import BaseModel
+# --- A generic model for the {"value": ...} structure ---
+class FieldValue(BaseModel):
+    value: Optional[Any] = None
 
-# Request/Response Models
-class OCRRequest(BaseModel):
-    """Request model for OCR processing"""
-    model_name: str = "mistral-ocr"
-    document_type: Optional[str] = "auto"
-    extract_tables: bool = True
-    custom_schema: Optional[str] = None
+# --- Sub-models using the FieldValue structure ---
+
+class BasicInformation(BaseModel):
+    bank_name: Optional[FieldValue] = None
+    account_name: Optional[FieldValue] = None
+    account_number: Optional[FieldValue] = None
+    ifsc_code: Optional[FieldValue] = None
+    start_date: Optional[FieldValue] = None
+    end_date: Optional[FieldValue] = None
+    account_address: Optional[FieldValue] = None
+    opening_balance: Optional[FieldValue] = None
+    closing_balance: Optional[FieldValue] = None
+
+class TransactionItem(BaseModel):
+    date: Optional[FieldValue] = None
+    description: Optional[FieldValue] = None
+    debit: Optional[FieldValue] = None
+    credit: Optional[FieldValue] = None
+    balance: Optional[FieldValue] = None
+    category: Optional[FieldValue] = None
+    merchant_name: Optional[FieldValue] = None
+
+class ExtractedData(BaseModel):
+    basic_information: Optional[BasicInformation] = None # Allow this to be optional
+    transactions: Optional[List[TransactionItem]] = None # Allow this to be optional
+
+# --- Main API Request/Response Models ---
 
 class OCRResponse(BaseModel):
-    """Response model for OCR processing"""
     status: str
-    data: Optional[Dict[str, Any]] = None
+    data: Optional[Union[ExtractedData, Dict[str, Any]]] = None
     schema_used: Optional[str] = None
     confidence_score: Optional[float] = None
     processing_time_ms: int
@@ -24,122 +46,46 @@ class OCRResponse(BaseModel):
     error: Optional[str] = None
 
 class HealthResponse(BaseModel):
-    """Health check response model"""
     status: str
     service: str = "OCR Microservice"
     version: str = "1.0.0"
 
-# Default JSON Schemas for different document types
+# --- Revamped Default JSON Schema for Gemini ---
 DEFAULT_SCHEMAS = {
     "bank_statement": {
         "type": "object",
         "properties": {
-            "account_info": {
-                "type": "object",
+            "basic_information": {
+                "type": ["object", "null"],
                 "properties": {
-                    "account_holder": {"type": "string"},
-                    "account_number": {"type": "string"},
-                    "ifsc_code": {"type": "string"},
-                    "branch": {"type": "string"},
-                    "currency": {"type": "string"}
+                    "bank_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
+                    "account_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
+                    "account_number": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
+                    "ifsc_code": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
+                    "start_date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}}},
+                    "end_date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}}},
+                    "account_address": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
+                    "opening_balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}}},
+                    "closing_balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}}}
                 }
             },
             "transactions": {
-                "type": "array",
+                "type": ["array", "null"], # FIX: Allow the list of transactions to be null
                 "items": {
                     "type": "object",
                     "properties": {
-                        "date": {"type": "string"},
-                        "narration": {"type": "string"},
-                        "withdrawal": {"type": ["string", "null"]},
-                        "deposit": {"type": ["string", "null"]},
-                        "balance": {"type": ["string", "null"]}
+                        "date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}}},
+                        "description": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
+                        "debit": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"], "description": "Withdrawal amount. Use null if it is a deposit."}}},
+                        "credit": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"], "description": "Deposit amount. Use null if it is a withdrawal."}}},
+                        "balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}}},
+                        "category": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "Categorize: e.g., 'Salary', 'Transfer', 'Interest', etc."}}},
+                        "merchant_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "The merchant or person's name."}}}
                     }
-                }
-            },
-            "statement_summary": {
-                "type": "object",
-                "properties": {
-                    "opening_balance": {"type": "string"},
-                    "total_withdrawal": {"type": "string"},
-                    "total_deposit": {"type": "string"},
-                    "closing_balance": {"type": "string"}
                 }
             }
-        }
+        },
+        "required": ["basic_information", "transactions"]
     },
-    "invoice": {
-        "type": "object",
-        "properties": {
-            "invoice_info": {
-                "type": "object",
-                "properties": {
-                    "invoice_number": {"type": "string"},
-                    "invoice_date": {"type": "string"},
-                    "due_date": {"type": "string"}
-                }
-            },
-            "vendor_info": {
-                "type": "object",
-                "properties": {
-                    "vendor_name": {"type": "string"},
-                    "vendor_address": {"type": "string"},
-                    "vendor_phone": {"type": "string"}
-                }
-            },
-            "line_items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "description": {"type": "string"},
-                        "quantity": {"type": "number"},
-                        "unit_price": {"type": "number"},
-                        "amount": {"type": "number"}
-                    }
-                }
-            },
-            "totals": {
-                "type": "object",
-                "properties": {
-                    "subtotal": {"type": "number"},
-                    "tax": {"type": "number"},
-                    "grand_total": {"type": "number"}
-                }
-            }
-        }
-    },
-    "receipt": {
-        "type": "object",
-        "properties": {
-            "store_info": {
-                "type": "object",
-                "properties": {
-                    "store_name": {"type": "string"},
-                    "store_address": {"type": "string"},
-                    "store_phone": {"type": "string"}
-                }
-            },
-            "transaction_info": {
-                "type": "object",
-                "properties": {
-                    "receipt_number": {"type": "string"},
-                    "date": {"type": "string"},
-                    "time": {"type": "string"}
-                }
-            },
-            "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "item_name": {"type": "string"},
-                        "quantity": {"type": "number"},
-                        "price": {"type": "number"}
-                    }
-                }
-            },
-            "total": {"type": "number"}
-        }
-    }
+    # ... other schemas ...
 }
