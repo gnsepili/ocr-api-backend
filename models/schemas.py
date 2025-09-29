@@ -4,9 +4,12 @@ Pydantic Models and JSON Schemas - V5 (Flexible Validation)
 from typing import Optional, Dict, Any, List, Union
 from pydantic import BaseModel, Field
 
-# --- A generic model for the {"value": ...} structure ---
+# --- A generic model for the {"value": ..., "position": ..., "confidence": ..., "review_required": ...} structure ---
 class FieldValue(BaseModel):
     value: Optional[Any] = None
+    position: Optional[List[float]] = []
+    confidence: Optional[float] = 1.0
+    review_required: Optional[bool] = False
 
 # --- Sub-models using the FieldValue structure ---
 
@@ -58,15 +61,15 @@ DEFAULT_SCHEMAS = {
             "basic_information": {
                 "type": ["object", "null"],
                 "properties": {
-                    "bank_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
-                    "account_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
-                    "account_number": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
-                    "ifsc_code": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
-                    "start_date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}}},
-                    "end_date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}}},
-                    "account_address": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
-                    "opening_balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}}},
-                    "closing_balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}}}
+                    "bank_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "account_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "account_number": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "ifsc_code": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "start_date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "end_date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "account_address": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "opening_balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                    "closing_balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}}
                 }
             },
             "transactions": {
@@ -74,13 +77,13 @@ DEFAULT_SCHEMAS = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}}},
-                        "description": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}}},
-                        "debit": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"], "description": "Withdrawal amount. Use null if it is a deposit."}}},
-                        "credit": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"], "description": "Deposit amount. Use null if it is a withdrawal."}}},
-                        "balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}}},
-                        "category": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "Categorize: e.g., 'Salary', 'Transfer', 'Interest', etc."}}},
-                        "merchant_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "The merchant or person's name."}}}
+                        "date": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "YYYY-MM-DD format"}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                        "description": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                        "debit": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"], "description": "Withdrawal amount. Use null if it is a deposit."}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                        "credit": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"], "description": "Deposit amount. Use null if it is a withdrawal."}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                        "balance": {"type": ["object", "null"], "properties": {"value": {"type": ["number", "null"]}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                        "category": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "Categorize: e.g., 'Salary', 'Transfer', 'Interest', etc."}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}},
+                        "merchant_name": {"type": ["object", "null"], "properties": {"value": {"type": ["string", "null"], "description": "The merchant or person's name."}, "position": {"type": "array", "items": {"type": "number"}}, "confidence": {"type": "number"}, "review_required": {"type": "boolean"}}}
                     }
                 }
             }

@@ -1,23 +1,20 @@
 """
-Simple OCR Microservice - Modular Implementation (Refactored)
-Extracts text and tables from PDFs using Mistral OCR + LLM for structured data
+Simple OCR Microservice - Gemini Only
+Extracts text and tables from PDFs using Gemini + EasyOCR hybrid approach
 """
 
-import json
 import logging
 import time
 from typing import Optional
 
-import httpx
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import os
 
 # Import modular components
-from services.ocr_service import MistralOCRService
-from services.llm_service import MistralLLMService
-from services.gemini_service import GeminiService
-# Import the newly refactored models, including ExtractedData
-from models.schemas import OCRResponse, HealthResponse, DEFAULT_SCHEMAS, ExtractedData
+from services.gemini_service_v3 import HybridGeminiService
+from models.schemas import OCRResponse, HealthResponse, DEFAULT_SCHEMAS
 
 # Load environment variables
 load_dotenv()
@@ -31,138 +28,79 @@ MAX_FILE_SIZE_MB = 50
 
 # FastAPI App
 app = FastAPI(
-    title="Simple OCR Microservice",
-    description="Extract text and tables from PDFs",
-    version="1.0.0"
+    title="OCR Microservice",
+    description="Extract structured data from PDFs using Gemini AI",
+    version="2.0.0"
 )
 
-# Initialize services
-import os
-mistral_api_key = os.getenv("MISTRAL_API_KEY")
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize Gemini service
 gemini_api_key = os.getenv("GEMINI_API_KEY")
+if not gemini_api_key:
+    raise RuntimeError("GEMINI_API_KEY environment variable is required")
 
-if not mistral_api_key:
-    raise RuntimeError("MISTRAL_API_KEY environment variable is required")
-
-ocr_service = MistralOCRService(mistral_api_key)
-llm_service = MistralLLMService(mistral_api_key)
-gemini_service = GeminiService(gemini_api_key) if gemini_api_key else None
+gemini_service = HybridGeminiService(gemini_api_key)
 
 # API Endpoints
 @app.post("/ocr/process", response_model=OCRResponse)
-async def process_document(
-    file: UploadFile = File(...),
-    model_name: str = Form("mistral-ocr"),
-    document_type: str = Form("auto"),
-    extract_tables: bool = Form(True),
-    custom_schema: Optional[str] = Form(None)
-):
+async def process_document(file: UploadFile = File(...)):
+    """
+    Process a PDF document and extract structured data.
+    Uses Gemini AI with EasyOCR for precise coordinate mapping.
+    """
     start_time = time.time()
 
     try:
+        # Validate file type
         if not file.filename or not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
+        # Read file content
         file_content = await file.read()
         file_size_mb = len(file_content) / (1024 * 1024)
+        
         if file_size_mb > MAX_FILE_SIZE_MB:
-            raise HTTPException(status_code=400, detail=f"File too large. Max size: {MAX_FILE_SIZE_MB}MB")
-
-        if model_name.startswith("gemini"):
-            if not gemini_service:
-                raise HTTPException(status_code=500, detail="Gemini API key not configured")
-
-            schema_used = "auto"
-            target_schema = None
-
-            if document_type == "custom" and custom_schema:
-                try:
-                    target_schema = json.loads(custom_schema)
-                    schema_used = "custom"
-                except json.JSONDecodeError:
-                    raise HTTPException(status_code=400, detail="Invalid custom schema JSON")
-            elif document_type in DEFAULT_SCHEMAS:
-                target_schema = DEFAULT_SCHEMAS[document_type]
-                schema_used = document_type
-            elif document_type == "auto":
-                target_schema = DEFAULT_SCHEMAS["bank_statement"]
-                schema_used = "bank_statement"
-
-            if not target_schema:
-                raise HTTPException(status_code=400, detail="Schema is required for Gemini processing")
-
-            gemini_result = await gemini_service.process_document_with_schema(
-                file_content, target_schema, document_type
-            )
-            
-            # --- CHANGE: Parse the dictionary into our new strongly-typed Pydantic model ---
-            # This validates the LLM's output and creates a proper data object.
-            structured_data = ExtractedData(**gemini_result["structured_data"])
-
-            processing_time = int((time.time() - start_time) * 1000)
-
-            return OCRResponse(
-                status="success",
-                data=structured_data, # The data is now an ExtractedData object
-                schema_used=schema_used,
-                confidence_score=gemini_result["confidence"],
-                processing_time_ms=processing_time,
-                pages_processed=gemini_result["pages_processed"]
+            raise HTTPException(
+                status_code=400, 
+                detail=f"File too large. Max size: {MAX_FILE_SIZE_MB}MB"
             )
 
-        else:
-            # --- THIS ENTIRE MISTRAL LOGIC BLOCK IS UNCHANGED AND WILL WORK AS BEFORE ---
-            logger.info("Using Mistral processing path...")
-            ocr_result = await ocr_service.extract_text_and_tables(file_content)
-            extracted_text = ocr_result["text"]
+        logger.info(f"Processing file: {file.filename} ({file_size_mb:.2f}MB)")
 
-            schema_used = "raw"
-            target_schema = None
+        # Use bank statement schema by default
+        schema = DEFAULT_SCHEMAS["bank_statement"]
+        
+        # Process with Gemini hybrid approach
+        gemini_result = await gemini_service.process_document_hybrid(
+            file_content, 
+            schema, 
+            document_type="bank_statement"
+        )
+        
+        # Parse the response into ExtractedData model
+        from models.schemas import ExtractedData
+        structured_data = ExtractedData(**gemini_result["structured_data"])
 
-            if document_type == "custom" and custom_schema:
-                try:
-                    target_schema = json.loads(custom_schema)
-                    schema_used = "custom"
-                except json.JSONDecodeError:
-                    raise HTTPException(status_code=400, detail="Invalid custom schema JSON")
-            elif document_type in DEFAULT_SCHEMAS:
-                target_schema = DEFAULT_SCHEMAS[document_type]
-                schema_used = document_type
-            elif document_type == "auto":
-                if "account" in extracted_text.lower() and "statement" in extracted_text.lower():
-                    target_schema = DEFAULT_SCHEMAS["bank_statement"]
-                    schema_used = "bank_statement"
-                # ... other auto-detection logic ...
-                else:
-                    schema_used = "raw"
+        processing_time = int((time.time() - start_time) * 1000)
 
-            structured_data = None
-            if target_schema:
-                llm_result = await llm_service.extract_structured_data(
-                    extracted_text, target_schema, document_type
-                )
-                structured_data = llm_result["structured_data"]
+        logger.info(f"Processing complete in {processing_time}ms")
 
-            processing_time = int((time.time() - start_time) * 1000)
-
-            if structured_data:
-                return OCRResponse(
-                    status="success",
-                    data=structured_data, # Data is a simple Dict, which is still valid
-                    schema_used=schema_used,
-                    confidence_score=ocr_result["confidence"],
-                    processing_time_ms=processing_time,
-                    pages_processed=ocr_result["pages_processed"]
-                )
-            else:
-                return OCRResponse(
-                    status="success",
-                    data={"extracted_text": extracted_text, "tables": ocr_result.get("tables")},
-                    schema_used="raw",
-                    confidence_score=ocr_result["confidence"],
-                    processing_time_ms=processing_time,
-                    pages_processed=ocr_result["pages_processed"]
-                )
+        return OCRResponse(
+            status="success",
+            data=structured_data,
+            schema_used="bank_statement",
+            confidence_score=gemini_result["confidence"],
+            processing_time_ms=processing_time,
+            pages_processed=gemini_result["pages_processed"]
+        )
 
     except HTTPException:
         raise
@@ -176,14 +114,24 @@ async def process_document(
             pages_processed=0
         )
 
-# ... (health check and root endpoints remain the same) ...
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
+    """Health check endpoint"""
     return HealthResponse(status="healthy")
 
 @app.get("/")
 async def root():
-    return {"service": "Simple OCR Microservice", "version": "1.0.0"}
+    """Root endpoint with service information"""
+    return {
+        "service": "OCR Microservice",
+        "version": "2.0.0",
+        "description": "Extract structured data from PDFs using Gemini AI",
+        "endpoints": {
+            "process": "/ocr/process (POST)",
+            "health": "/health (GET)",
+            "docs": "/docs (GET)"
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

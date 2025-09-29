@@ -12,7 +12,6 @@ eggs/
 .eggs/
 lib/
 lib64/
-ai-docs/
 parts/
 sdist/
 var/
@@ -27,6 +26,8 @@ venv/
 env/
 ENV/
 .venv/
+
+# Environment variables
 .env
 .env.local
 .env.production
@@ -58,3 +59,43 @@ logs/
 
 # FastAPI
 fastapi_cache/
+
+# Frontend (React/Node)
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.vite/
+frontend/.turbo/
+
+# Sample/Test Files
+*.pdf
+!PRAKASH*.pdf
+sample*.json
+test*.py
+test*.json
+*_annotated*.pdf
+visualize*.py
+output.json
+hybrid_api_result.json
+ocr_only_result.json
+complete_easyocr_output.json
+extracted_*.json
+
+# AI Documentation
+ai-docs/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# pytest
+.pytest_cache/
+.tox/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json

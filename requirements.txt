@@ -1,15 +1,26 @@
+# FastAPI and server
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
-mistralai==0.4.0
-google-generativeai
+
+# AI/ML services
+google-generativeai==0.3.2
+easyocr==1.7.0
+
+# Data validation
 pydantic>=2.5.2,<3.0.0
 pydantic-settings==2.1.0
+jsonschema==4.19.2
+
+# Utilities
 python-dotenv==1.0.0
 aiofiles==23.2.1
-pillow==10.1.0
-jsonschema==4.19.2
 httpx==0.25.2
-easyocr==1.7.0
+
+# PDF and image processing
+pillow==9.5.0
 pdf2image==1.16.3
 opencv-python==4.8.1.78
+
+# Required by opencv and easyocr
+numpy<2.0
